@@ -1,0 +1,619 @@
+--[[
+    Toilet Hub (トイレットハブ) - Modified Version
+
+    This script is an enhanced version of the original orbiting tool for
+    the Roblox game “Fling Things and People”.  It includes the same
+    orbiting functionality with various shapes and parameters, but with
+    additional improvements:
+
+      • A more robust third‑person camera toggle.  When enabled, the
+        script enforces third‑person view every frame to combat other
+        scripts or game settings that might override it.  Disabling the
+        toggle returns to first‑person.
+      • Teleporting toilets now permanently assigns network ownership of
+        each toilet to the local player.  This allows you to fully
+        control the toilets after teleporting without the server reclaiming
+        ownership.
+
+    See the original script for more details on usage.  Only the parts
+    needed to address the user’s requests have been modified.
+]]
+
+-- Services
+local Players    = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Workspace  = game:GetService("Workspace")
+
+local LocalPlayer = Players.LocalPlayer
+
+-- Load Orion library for UI.  If the URL changes in the future, update here.
+local OrionLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/jadpy/suki/refs/heads/main/orion"))()
+
+-- Create the main window
+local Window = OrionLib:MakeWindow({
+    Name        = "トイレットハブ", -- “Toilet Hub” in Japanese
+    HidePremium = true,
+    SaveConfig  = false
+})
+
+-- Create a tab for the orbit controls
+local Tab = Window:MakeTab({
+    Name = "Main",
+    Icon = "rbxassetid://7733749631"
+})
+
+-- Configuration variables
+local Enabled     = false
+local Mode        = "Orbit"
+local Speed       = 1200
+local Radius      = 12
+local Height      = 6
+local MaxVel      = 700
+local Strength    = 16
+local AutoSwitch  = false
+local SwitchSec   = 2.0
+local Petals      = 7       -- used for Flower mode
+local VertAmp     = 2.5     -- used for Helix mode
+local VBounce     = true
+local VHeight     = 8
+local VSpeedUp    = 1.2
+local VSpeedDown  = 1.2
+
+-- Target sets map names to model lists.  “Sparkler” selects fireworks,
+-- while “Toilet” selects both white and gold toilets.
+local TargetSet = "Sparkler"
+local TargetSets = {
+    ["Sparkler"] = {"FireworkSparkler"},
+    ["Toilet"]   = {"ToiletWhite", "ToiletGold"}
+}
+
+-- Internal state
+local objects        = {}       -- list of {model, part}
+local loopConn       = nil      -- connection to the orbit loop
+local switchTimer    = 0        -- timer for auto-switching modes
+local modesCycle     = {"Orbit","Heart","Star","Square","Infinity",
+                        "Spiral","Flower","Helix","LOL","Octagon"}
+local yPhase, yDirection = 0, 1
+
+-- Additional state for third‑person enforcement
+local thirdPersonConn = nil
+-- store previous zoom values when toggling third person so we can restore them
+local prevMinZoom, prevMaxZoom = nil, nil
+
+-- Helper: get the humanoid root part of the local player
+local function HRP()
+    local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    return character:FindFirstChild("HumanoidRootPart")
+end
+
+-- Helper: find a base part in a model (prefers PrimaryPart)
+local function getPartFromModel(m)
+    if m.PrimaryPart then return m.PrimaryPart end
+    return m:FindFirstChildWhichIsA("BasePart")
+end
+
+-- Attach BodyVelocity and BodyGyro to a part so we can move/rotate it
+local function attachPhysics(part)
+    if not part or not part.Parent then return end
+    -- set network owner so the client controls physics for this part
+    pcall(function() part:SetNetworkOwner(LocalPlayer) end)
+    part.CanCollide, part.CanTouch = false, false
+    if not part:FindFirstChild("BodyVelocity") then
+        local bv = Instance.new("BodyVelocity")
+        bv.Name = "BodyVelocity"
+        bv.MaxForce = Vector3.new(1e8, 1e8, 1e8)
+        bv.P = 1e6
+        bv.Velocity = Vector3.new()
+        bv.Parent = part
+    end
+    if not part:FindFirstChild("BodyGyro") then
+        local bg = Instance.new("BodyGyro")
+        bg.Name = "BodyGyro"
+        bg.MaxTorque = Vector3.new(1e8, 1e8, 1e8)
+        bg.P = 1e6
+        bg.CFrame = part.CFrame
+        bg.Parent = part
+    end
+end
+
+-- Detach BodyVelocity and BodyGyro from a part when disabling
+local function detachPhysics(part)
+    if not part then return end
+    local bv = part:FindFirstChild("BodyVelocity"); if bv then bv:Destroy() end
+    local bg = part:FindFirstChild("BodyGyro");    if bg then bg:Destroy() end
+    part.CanCollide, part.CanTouch = true, true
+    pcall(function() part:SetNetworkOwner(nil) end)
+end
+
+-- Check if a model name is in the current target set
+local function nameInTargets(name)
+    local tset = TargetSets[TargetSet]
+    if not tset then return false end
+    for _,n in ipairs(tset) do
+        if name == n then return true end
+    end
+    return false
+end
+
+-- Rescan the workspace for matching models
+local function rescan()
+    -- detach physics from existing objects
+    for _,obj in ipairs(objects) do
+        if obj.part then detachPhysics(obj.part) end
+    end
+    objects = {}
+    local tset = TargetSets[TargetSet]
+    if not tset then return end
+    for _,desc in ipairs(Workspace:GetDescendants()) do
+        if desc:IsA("Model") and nameInTargets(desc.Name) then
+            local part = getPartFromModel(desc)
+            if part and not part.Anchored then
+                table.insert(objects, {model=desc, part=part})
+            end
+        end
+    end
+    -- attach physics to new objects
+    for i=1,#objects do
+        attachPhysics(objects[i].part)
+    end
+end
+
+-- Construct a list of points that draw the letters “LOL” when orbiting.
+local function buildLOL(scale)
+    local pts = {}
+    local function push(v) pts[#pts+1] = v end
+    -- build the L
+    for z=0,10 do push(Vector3.new(0,0,z*scale)) end
+    for x=0,6  do push(Vector3.new(x*scale,0,10*scale)) end
+    -- build the O
+    local r = 4.5*scale
+    for i=0,21 do
+        local t=(i/22)*math.pi*2
+        push(Vector3.new(12*scale+math.cos(t)*r,0,5*scale+math.sin(t)*r))
+    end
+    -- build the second L
+    for z=0,10 do push(Vector3.new(24*scale,0,z*scale)) end
+    for x=0,6  do push(Vector3.new(24*scale+x*scale,0,10*scale)) end
+    return pts
+end
+
+local lolPts = buildLOL(1.8)
+
+-- Determine the target offset for the j‑th object at time t
+local function targetFor(j, n, t)
+    local ang = math.rad(Speed) * t + (j-1)/math.max(1,n) * math.pi*2
+    local r = Radius
+    if Mode == "Orbit" then
+        return Vector3.new(math.cos(ang)*r, 0, math.sin(ang)*r)
+    elseif Mode == "Heart" then
+        local x = 16*math.sin(ang)^3
+        local y = 13*math.cos(ang)-5*math.cos(2*ang)-2*math.cos(3*ang)-math.cos(4*ang)
+        return Vector3.new((x*r/13), 0, (y*r/13))
+    elseif Mode == "Star" then
+        local k = 5
+        local rr = (math.cos(k*ang) > 0) and r or r*0.45
+        return Vector3.new(rr*math.cos(ang), 0, rr*math.sin(ang))
+    elseif Mode == "Square" then
+        local p = (ang%(2*math.pi))/(2*math.pi)
+        local s = r*2
+        local h = s/2
+        local x,z
+        if p < 0.25 then
+            x = h; z = -h + 4*h*p
+        elseif p < 0.5 then
+            x = h - 4*h*(p-0.25); z = h
+        elseif p < 0.75 then
+            x = -h; z = h - 4*h*(p-0.5)
+        else
+            x = -h + 4*h*(p-0.75); z = -h
+        end
+        return Vector3.new(x, 0, z)
+    elseif Mode == "Infinity" then
+        return Vector3.new(r*math.cos(ang), 0, r*math.sin(ang)*math.cos(ang))
+    elseif Mode == "Spiral" then
+        local rr = math.clamp(0.20*Speed*(t%5), 0, r)
+        return Vector3.new(rr*math.cos(ang), 0, rr*math.sin(ang))
+    elseif Mode == "LOL" then
+        if #lolPts == 0 then lolPts = buildLOL(1.8) end
+        local idx = ((j-1) % #lolPts) + 1
+        return lolPts[idx]
+    elseif Mode == "Flower" then
+        local rr = r * (0.55 + 0.45*math.cos(Petals*ang))
+        return Vector3.new(rr*math.cos(ang), 0, rr*math.sin(ang))
+    elseif Mode == "Helix" then
+        local yVal = VertAmp * math.sin(ang*2 + j*0.8)
+        return Vector3.new(r*math.cos(ang), yVal, r*math.sin(ang))
+    elseif Mode == "Octagon" then
+        local sides = 8
+        local step = (2*math.pi)/sides
+        local p = (ang % (2*math.pi)) / step
+        local idx = math.floor(p)
+        local frac = p - idx
+        local a1 = idx * step
+        local a2 = (idx + 1) * step
+        local v1 = Vector3.new(math.cos(a1)*r, 0, math.sin(a1)*r)
+        local v2 = Vector3.new(math.cos(a2)*r, 0, math.sin(a2)*r)
+        return v1:Lerp(v2, frac)
+    end
+    -- default: circle
+    return Vector3.new(r, 0, 0)
+end
+
+-- Start the orbiting loop
+local function startLoop()
+    if loopConn then loopConn:Disconnect() loopConn = nil end
+    local tAccum = 0
+    switchTimer = 0
+    loopConn = RunService.Heartbeat:Connect(function(dt)
+        local root = HRP(); if not root then return end
+        tAccum += dt
+
+        -- auto cycle through modes
+        if AutoSwitch and SwitchSec > 0 then
+            switchTimer += dt
+            if switchTimer >= SwitchSec then
+                switchTimer = 0
+                local idx = 1
+                for i,m in ipairs(modesCycle) do
+                    if m == Mode then idx = i; break end
+                end
+                Mode = modesCycle[(idx % #modesCycle) + 1]
+            end
+        end
+
+        -- vertical bounce effect
+        local rate = (yDirection > 0) and VSpeedUp or VSpeedDown
+        yPhase = yPhase + yDirection * rate * dt * 2
+        if yPhase >= 1 then yPhase = 1; yDirection = -1 end
+        if yPhase <= -1 then yPhase = -1; yDirection = 1 end
+        local yosc = VBounce and (VHeight * yPhase) or 0
+
+        -- compute the center above the player
+        local baseCenter = root.Position + Vector3.new(0, Height, 0)
+        local center = baseCenter + Vector3.new(0, yosc, 0)
+
+        -- update each object
+        for j = 1, #objects do
+            local rec = objects[j]; local p = rec and rec.part
+            if p and p.Parent then
+                local off = targetFor(j, #objects, tAccum)
+                local targetPos = center + off
+                local dir = targetPos - p.Position
+                local d = dir.Magnitude
+                local bv = p:FindFirstChild("BodyVelocity")
+                if bv then
+                    bv.Velocity = (d > 0.02) and dir.Unit * math.min(MaxVel, d*Strength) or Vector3.new()
+                end
+                local bg = p:FindFirstChild("BodyGyro")
+                if bg then bg.CFrame = CFrame.new(p.Position, center) end
+            end
+        end
+    end)
+end
+
+-- Stop the orbiting loop and detach physics
+local function stopLoop()
+    if loopConn then loopConn:Disconnect() loopConn = nil end
+end
+
+-- Hook into workspace changes so new models join the orbit automatically
+Workspace.DescendantAdded:Connect(function(inst)
+    if inst:IsA("Model") and Enabled and nameInTargets(inst.Name) then
+        task.wait(0.1)
+        rescan()
+    end
+end)
+
+Workspace.DescendantRemoving:Connect(function(inst)
+    if inst:IsA("Model") and Enabled and nameInTargets(inst.Name) then
+        task.defer(rescan)
+    end
+end)
+
+-- UI widgets
+Tab:AddToggle({
+    Name    = "有効化 (Enable)",
+    Default = false,
+    Callback = function(v)
+        Enabled = v
+        if v then
+            rescan()
+            startLoop()
+        else
+            stopLoop()
+            for _,rec in ipairs(objects) do
+                if rec.part then detachPhysics(rec.part) end
+            end
+            objects = {}
+        end
+    end
+})
+
+Tab:AddDropdown({
+    Name    = "対象モデル (Target Set)",
+    Default = TargetSet,
+    Options = {"Sparkler","Toilet"},
+    Callback = function(v)
+        TargetSet = v
+        if Enabled then
+            rescan()
+        end
+    end
+})
+
+Tab:AddDropdown({
+    Name    = "形状モード (Shape Mode)",
+    Default = Mode,
+    Options = modesCycle,
+    Callback = function(v)
+        Mode = v
+    end
+})
+
+Tab:AddSlider({
+    Name      = "回転速度 (Rotation Speed)",
+    Min       = 60,
+    Max       = 4000,
+    Default   = Speed,
+    Increment = 10,
+    Callback  = function(v) Speed = v end
+})
+
+Tab:AddSlider({
+    Name      = "半径 (Radius)",
+    Min       = 2,
+    Max       = 60,
+    Default   = Radius,
+    Increment = 0.5,
+    Callback  = function(v) Radius = v end
+})
+
+Tab:AddSlider({
+    Name      = "高さ (Height)",
+    Min       = -10,
+    Max       = 50,
+    Default   = Height,
+    Increment = 0.5,
+    Callback  = function(v) Height = v end
+})
+
+Tab:AddSlider({
+    Name      = "追従最大速度 (Max Velocity)",
+    Min       = 100,
+    Max       = 1500,
+    Default   = MaxVel,
+    Increment = 10,
+    Callback  = function(v) MaxVel = v end
+})
+
+Tab:AddSlider({
+    Name      = "追従強度 (Tracking Strength)",
+    Min       = 4,
+    Max       = 40,
+    Default   = Strength,
+    Increment = 1,
+    Callback  = function(v) Strength = v end
+})
+
+Tab:AddToggle({
+    Name    = "縦往復 (Vertical Bounce)",
+    Default = VBounce,
+    Callback = function(v)
+        VBounce = v
+    end
+})
+
+Tab:AddTextbox({
+    Name          = "縦往復の高さ (Bounce Height)",
+    Default       = tostring(VHeight),
+    TextDisappear = false,
+    Callback = function(txt)
+        local num = tonumber(txt)
+        if num then
+            if num < 0 then num = 0 end
+            if num > 5000 then num = 5000 end
+            VHeight = num
+        end
+    end
+})
+
+Tab:AddSlider({
+    Name      = "上昇速度 (Up Speed)",
+    Min       = 0,
+    Max       = 20,
+    Default   = VSpeedUp,
+    Increment = 0.01,
+    Callback  = function(v) VSpeedUp = v end
+})
+
+Tab:AddSlider({
+    Name      = "下降速度 (Down Speed)",
+    Min       = 0,
+    Max       = 20,
+    Default   = VSpeedDown,
+    Increment = 0.01,
+    Callback  = function(v) VSpeedDown = v end
+})
+
+Tab:AddToggle({
+    Name    = "自動切替 (Auto Switch Mode)",
+    Default = AutoSwitch,
+    Callback = function(v)
+        AutoSwitch = v
+        switchTimer = 0
+    end
+})
+
+Tab:AddSlider({
+    Name      = "切替秒 (Switch Interval)",
+    Min       = 0.5,
+    Max       = 6,
+    Default   = SwitchSec,
+    Increment = 0.1,
+    Callback  = function(v)
+        SwitchSec = v
+    end
+})
+
+-- Finalise and show the UI
+-- Create a second tab for toilet-related actions (spawning)
+local Tab2 = Window:MakeTab({
+    Name = "Toilet",
+    Icon = "rbxassetid://7733749631"
+})
+
+-- Spawn a new toilet near the player.  This clones an existing toilet model
+-- (either white or gold) from the workspace and positions the clone near the
+-- player's character.  The clone is unanchored, has collisions enabled, and
+-- its network ownership is assigned to the local player for smooth client
+-- control.  After spawning, we optionally rescan the workspace so the new
+-- object joins the orbit if orbiting is enabled.
+local function spawnToilet()
+    local root = HRP()
+    if not root then return end
+    -- Find a sample toilet model in the workspace to clone.  Prefer white over gold
+    local sample = nil
+    for _, desc in ipairs(Workspace:GetDescendants()) do
+        if desc:IsA("Model") and (desc.Name == "ToiletWhite" or desc.Name == "ToiletGold") then
+            sample = desc
+            if desc.Name == "ToiletWhite" then
+                break
+            end
+        end
+    end
+    if not sample then return end
+    -- Clone the model and parent it to the workspace
+    local clone = sample:Clone()
+    clone.Parent = Workspace
+    -- Position slightly above the player with a random horizontal offset
+    local pos = root.Position + Vector3.new(math.random(-5,5), 5, math.random(-5,5))
+    -- Use MoveTo for consistent behaviour and call MakeJoints to rebuild any welds
+    pcall(function()
+        clone:MoveTo(pos)
+    end)
+    pcall(function()
+        clone:MakeJoints()
+    end)
+    -- Configure all parts in the clone
+    for _, bp in ipairs(clone:GetDescendants()) do
+        if bp:IsA("BasePart") then
+            bp.Anchored = false
+            bp.CanCollide = true
+            bp.CanTouch   = true
+            -- Assign network ownership to the local player for smooth physics
+            pcall(function() bp:SetNetworkOwner(LocalPlayer) end)
+        end
+    end
+    -- If orbiting is enabled, include the new toilet in the orbit
+    if Enabled then
+        rescan()
+    end
+end
+
+-- Add a button to spawn a new toilet
+Tab2:AddButton({
+    Name     = "トイレをスポーン (Spawn Toilet)",
+    Callback = spawnToilet
+})
+
+-- Finalise and show the UI
+-- Create a third tab for player-specific camera controls
+local Tab3 = Window:MakeTab({
+    Name = "Player",
+    Icon = "rbxassetid://7733749631"
+})
+
+-- Toggle between third-person and first-person camera modes.  This
+-- modified toggle enforces third-person view every frame when enabled
+-- to combat other scripts that might lock the camera.  Disabling the
+-- toggle reverts to first-person and stops the enforcement loop.
+Tab3:AddToggle({
+    Name    = "三人称視点 (Third Person View)",
+    Default = true,
+    Callback = function(v)
+        if v then
+            -- Save the player's current zoom settings so we can restore them later
+            prevMinZoom = LocalPlayer.CameraMinZoomDistance
+            prevMaxZoom = LocalPlayer.CameraMaxZoomDistance
+            -- ensure the player can zoom out in third person
+            -- Setting the min zoom to 0 allows the player to zoom close, while
+            -- the max zoom determines how far they can zoom out.
+            pcall(function()
+                LocalPlayer.CameraMinZoomDistance = 0
+                LocalPlayer.CameraMaxZoomDistance = 128
+            end)
+            -- set camera mode to Classic to allow third person and set the camera type
+            LocalPlayer.CameraMode = Enum.CameraMode.Classic
+            local cam = workspace.CurrentCamera
+            if cam then
+                cam.CameraType = Enum.CameraType.Custom
+            end
+            -- disconnect any previous enforcement loop before connecting a new one
+            if thirdPersonConn then
+                thirdPersonConn:Disconnect()
+                thirdPersonConn = nil
+            end
+            -- enforce Classic mode, camera type, and zoom bounds each frame.  Some games
+            -- continually overwrite these properties, so we set them on RenderStepped
+            thirdPersonConn = RunService.RenderStepped:Connect(function()
+                if LocalPlayer.CameraMode ~= Enum.CameraMode.Classic then
+                    LocalPlayer.CameraMode = Enum.CameraMode.Classic
+                end
+                local cam2 = workspace.CurrentCamera
+                if cam2 then
+                    if cam2.CameraType ~= Enum.CameraType.Custom then
+                        cam2.CameraType = Enum.CameraType.Custom
+                    end
+                end
+                -- maintain zoom distances; occasionally game scripts clamp these
+                if prevMinZoom ~= nil and LocalPlayer.CameraMinZoomDistance ~= 0 then
+                    LocalPlayer.CameraMinZoomDistance = 0
+                end
+                if prevMaxZoom ~= nil and LocalPlayer.CameraMaxZoomDistance < 128 then
+                    LocalPlayer.CameraMaxZoomDistance = 128
+                end
+            end)
+        else
+            -- user disabled third person; disconnect enforcement and restore settings
+            if thirdPersonConn then
+                thirdPersonConn:Disconnect()
+                thirdPersonConn = nil
+            end
+            -- restore original zoom distances if saved
+            if prevMinZoom ~= nil then
+                pcall(function()
+                    LocalPlayer.CameraMinZoomDistance = prevMinZoom
+                end)
+            end
+            if prevMaxZoom ~= nil then
+                pcall(function()
+                    LocalPlayer.CameraMaxZoomDistance = prevMaxZoom
+                end)
+            end
+            prevMinZoom, prevMaxZoom = nil, nil
+            -- set camera back to first person lock
+            LocalPlayer.CameraMode = Enum.CameraMode.LockFirstPerson
+            -- optionally set camera type to default so other systems don't conflict
+            local cam = workspace.CurrentCamera
+            if cam then
+                cam.CameraType = Enum.CameraType.Custom
+            end
+        end
+    end
+})
+
+-- Allow adjustment of the camera's field of view.  Useful for zooming in or out.
+Tab3:AddSlider({
+    Name      = "視野角 (Camera FOV)",
+    Min       = 40,
+    Max       = 100,
+    Default   = (workspace.CurrentCamera and workspace.CurrentCamera.FieldOfView) or 70,
+    Increment = 1,
+    Callback  = function(v)
+        local cam = workspace.CurrentCamera
+        if cam then cam.FieldOfView = v end
+    end
+})
+
+-- Finalise and show the UI
+OrionLib:Init()
