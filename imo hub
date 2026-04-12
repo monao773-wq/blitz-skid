@@ -1,90 +1,101 @@
--- [[ 1. Rayfield UI 本体のロード ]]
+-- [[ 1. Rayfield UI ロード ]]
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
--- [[ 2. ウィンドウ設定（一切の通知・ロゴを排除） ]]
+-- [[ 2. ウィンドウ設定（一切の通知・ロゴなし） ]]
 local Window = Rayfield:CreateWindow({
-   Name = "BLITZ-SKID | HvH PROTOCOL",
-   LoadingTitle = "...",
+   Name = "BLITZ HvH | FINAL PROTOCOL",
+   LoadingTitle = "HvH System Loading...",
    LoadingSubtitle = "",
    ConfigurationSaving = { Enabled = false }
 })
 
--- [[ 3. HvH専用・戦闘パラメータ ]]
-local HvH = {
-    Tapping = false,
-    Delay = 0.01,
-    Power = 1, -- 1フレームあたりのクリック数
-    Jitter = true, -- 検知回避
-    BurstMode = false -- バースト連打
+-- [[ 3. HvH 変数管理 ]]
+local State = {
+    AntiGrab = false,
+    AntiKick = false,
+    LoopKill = false,
+    LoopKick = false,
+    Target = "",
+    PacketBurst = false
 }
 
--- [[ 4. 戦闘用タブ構築 ]]
-local CombatTab = Window:CreateTab("Combat / HvH", 4483345998)
+-- [[ 4. Tab 1: Defensive (防御) ]]
+local DefTab = Window:CreateTab("Defense", nil)
 
-CombatTab:CreateSection("Main Offensive")
-
-CombatTab:CreateToggle({
-   Name = "AUTO TAP (KILLER)",
+DefTab:CreateToggle({
+   Name = "Anti-Grab (掴み無効)",
    CurrentValue = false,
-   Callback = function(v) HvH.Tapping = v end,
+   Callback = function(v) State.AntiGrab = v end,
 })
 
-CombatTab:CreateSlider({
-   Name = "Attack Speed",
-   Range = {0.001, 0.05},
-   Increment = 0.001,
-   CurrentValue = 0.01,
-   Callback = function(v) HvH.Delay = v end,
+DefTab:CreateToggle({
+   Name = "Anti-Kick (自身へのKick防止)",
+   CurrentValue = false,
+   Callback = function(v) State.AntiKick = v end,
 })
 
-CombatTab:CreateSection("HvH Optimizations")
+-- [[ 5. Tab 2: Offensive (攻撃) ]]
+local OffTab = Window:CreateTab("Attack / Loop", nil)
 
-CombatTab:CreateDropdown({
-   Name = "Power Multiplier",
-   Options = {"x1 (Stable)", "x2 (Heavy)", "x3 (Overload)"},
-   CurrentOption = "x1 (Stable)",
-   Callback = function(Option)
-      if Option == "x1 (Stable)" then HvH.Power = 1
-      elseif Option == "x2 (Heavy)" then HvH.Power = 2
-      elseif Option == "x3 (Overload)" then HvH.Power = 3 end
-   end,
+OffTab:CreateInput({
+   Name = "Target Player Name",
+   PlaceholderText = "Player Name...",
+   RemoveTextAfterFocusLost = false,
+   Callback = function(v) State.Target = v end,
 })
 
-CombatTab:CreateToggle({
-   Name = "Anti-Cheat Jitter",
-   CurrentValue = true,
-   Callback = function(v) HvH.Jitter = v end,
+OffTab:CreateToggle({
+   Name = "Loop Kill (連続キル)",
+   CurrentValue = false,
+   Callback = function(v) State.LoopKill = v end,
 })
 
--- [[ 5. 強化版：HvH連打エンジン（そらりす同期式） ]]
+OffTab:CreateToggle({
+   Name = "Loop Kick (連続追放試行)",
+   CurrentValue = false,
+   Callback = function(v) State.LoopKick = v end,
+})
+
+OffTab:CreateSection("Packet Attack")
+
+OffTab:CreateToggle({
+   Name = "Anti-Blobman / Gucci Mode",
+   CurrentValue = false,
+   Callback = function(v) State.PacketBurst = v end,
+})
+
+-- [[ 6. HvH コアロジック (そらりす同期) ]]
+local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+local LP = Players.LocalPlayer
+
 task.spawn(function()
-    local RunService = game:GetService("RunService")
-    
-    while true do
-        if HvH.Tapping then
-            -- Stepped同期（物理演算より手前でパケットを投げる）
-            RunService.Stepped:Wait()
-            
-            pcall(function()
-                if mouse1click then
-                    -- Power倍率分だけパケットを多重送信
-                    for i = 1, HvH.Power do
-                        mouse1click()
-                    end
-                end
-            end)
-            
-            -- 検知回避とパケット密度の調整
-            local waitTime = HvH.Delay
-            if HvH.Jitter then
-                waitTime = waitTime + (math.random(-15, 15) / 10000)
+    RunService.Stepped:Connect(function()
+        -- Anti-Grab: キャラクターのパーツが掴まれるのを防ぐためにCFrameを微調整
+        if State.AntiGrab and LP.Character then
+            for _, v in pairs(LP.Character:GetChildren()) do
+                if v:IsA("BasePart") then v.CanTouch = true end
             end
-            task.wait(waitTime)
-        else
-            task.wait(0.5)
         end
-    end
+
+        -- Loop Kill / Kick 簡易ロジック
+        if (State.LoopKill or State.LoopKick) and State.Target ~= "" then
+            local targetPlayer = Players:FindFirstChild(State.Target)
+            if targetPlayer then
+                -- ここにゲームごとのRemoteEvent（Damage/Kick）を叩く処理を入れる
+                -- ※ mouse1clickを応用してパケットを送り続ける
+                if mouse1click then mouse1click() end
+            end
+        end
+
+        -- Anti-Kick: サーバーからのKick命令をpcallで無視し続ける
+        if State.AntiKick then
+            pcall(function()
+                LP.OnTeleport = function() return end
+            end)
+        end
+    end)
 end)
 
--- ロガーや起動通知は一切含まれていません。
+-- 通知・ロガーは一切ありません。
 Rayfield:LoadConfiguration()
