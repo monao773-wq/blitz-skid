@@ -1,100 +1,64 @@
--- [[ 1. Orion UI ライブラリの初期化 ]]
--- 外部サーバーからOrionの機能を呼び出します
-local OrionLib = loadstring(game:HttpGet(('https://raw.githubusercontent.com/shlexsoftware/Orion/main/source')))()
+-- [[ 1. ライブラリのセットアップ ]]
+-- 外部読み込みを安定させるため、Rayfield公式の最も安定したパスを使用
+local success, Rayfield = pcall(function()
+    return loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+end)
 
--- [[ 2. メインウィンドウの設定 ]]
-local Window = OrionLib:MakeWindow({
-    Name = "Blitz-Skid | OVERDRIVE HvH",
-    HidePremium = false,
-    SaveConfig = true,
-    ConfigFolder = "BlitzSkid_Config",
-    IntroText = "System Secured: Ready to Dominate"
+if not success then return end -- 読み込めない場合は即座に終了（エラーを出さない）
+
+-- [[ 2. ウィンドウ設定（そらりす並の安定性） ]]
+local Window = Rayfield:CreateWindow({
+   Name = "OVERDRIVE", -- 名前を極限まで短縮
+   LoadingTitle = "...",
+   LoadingSubtitle = "",
+   ConfigurationSaving = { Enabled = false }
 })
 
--- [[ 3. 変数管理（検知回避用） ]]
-local Tapping = false
-local BaseSpeed = 0.015
-local AntiKick = true
+-- [[ 3. 変数設定（そらりす.txt の内部ロジックを継承） ]]
+local State = {
+    Enabled = false,
+    Delay = 0.01,
+    Algorithm = "Stepped" -- そらりす基準の高速モード
+}
 
--- [[ 4. タブ作成 ]]
-local MainTab = Window:MakeTab({
-    Name = "Main / ftap",
-    Icon = "rbxassetid://4483345998",
-    PremiumOnly = false
+-- [[ 4. タブ & 機能 ]]
+local Tab = Window:CreateTab("Combat", nil)
+
+Tab:CreateToggle({
+   Name = "AUTO TAP",
+   CurrentValue = false,
+   Callback = function(Value) State.Enabled = Value end,
 })
 
--- [[ 5. UIコンポーネントの構築 ]]
-
-MainTab:AddToggle({
-    Name = "AUTO TAP ENABLED (自動タップ)",
-    Default = false,
-    Callback = function(Value)
-        Tapping = Value
-    end    
+Tab:CreateSlider({
+   Name = "Speed",
+   Range = {0.001, 0.05},
+   Increment = 0.001,
+   CurrentValue = 0.01,
+   Callback = function(Value) State.Delay = Value end,
 })
 
-MainTab:AddSlider({
-    Name = "Tap Speed (秒)",
-    Min = 0.005,
-    Max = 0.1,
-    Default = 0.015,
-    Increment = 0.001,
-    ValueName = "sec",
-    Callback = function(Value)
-        BaseSpeed = Value
-    end    
-})
-
-MainTab:AddToggle({
-    Name = "Anti-Kick Mode (検知回避)",
-    Default = true,
-    Callback = function(Value)
-        AntiKick = Value
-    end    
-})
-
-MainTab:AddLabel("警告: 低速設定はサーバーキックのリスクを下げます")
-
--- [[ 6. 限界突破：連打エンジンコア ]]
--- Xenoなどのエグゼキューターで最も安定するHeartbeat同期を採用
-
+-- [[ 5. 超高速連打エンジン（ロガー・通知一切なし） ]]
 task.spawn(function()
     local RunService = game:GetService("RunService")
-    local tapCount = 0
-    local burstLimit = math.random(10, 20)
     
     while true do
-        if Tapping then
-            -- サーバーの物理演算サイクルに同期（機械的リズムを隠す）
-            RunService.Heartbeat:Wait()
+        if State.Enabled then
+            -- そらりす.txt で採用されていた Stepped 同期をさらに高速化
+            RunService.Stepped:Wait() 
             
-            -- クリック実行
             if mouse1click then
                 mouse1click()
-                tapCount = tapCount + 1
+                -- 二重パケット（火力を既存の倍にする改良）
+                mouse1click()
             end
             
-            -- 遅延計算（アンチキック対策）
-            local finalDelay = BaseSpeed
-            if AntiKick then
-                -- 0.0001秒単位で毎回リズムを変える（統計検知対策）
-                local jitter = math.random(-50, 50) / 10000
-                finalDelay = finalDelay + jitter
-                
-                -- 定期的に「指を離す」瞬間を模倣（レートリミット対策）
-                if tapCount >= burstLimit then
-                    task.wait(finalDelay + 0.05)
-                    tapCount = 0
-                    burstLimit = math.random(10, 25)
-                end
-            end
-            
-            task.wait(finalDelay)
+            -- 人間には不可能な 0.0001秒単位のランダム揺らぎ
+            task.wait(State.Delay + (math.random(-10, 10) / 10000))
         else
-            -- OFF時は負荷をかけない
             task.wait(0.5)
         end
     end
 end)
 
---
+-- 通知コード（Rayfield:Notify）とロガー（Pastefy等）は完全に削除済み
