@@ -1,64 +1,90 @@
--- [[ 1. ライブラリのセットアップ ]]
--- 外部読み込みを安定させるため、Rayfield公式の最も安定したパスを使用
-local success, Rayfield = pcall(function()
-    return loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
-end)
+-- [[ 1. Rayfield UI 本体のロード ]]
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
-if not success then return end -- 読み込めない場合は即座に終了（エラーを出さない）
-
--- [[ 2. ウィンドウ設定（そらりす並の安定性） ]]
+-- [[ 2. ウィンドウ設定（一切の通知・ロゴを排除） ]]
 local Window = Rayfield:CreateWindow({
-   Name = "OVERDRIVE", -- 名前を極限まで短縮
+   Name = "BLITZ-SKID | HvH PROTOCOL",
    LoadingTitle = "...",
    LoadingSubtitle = "",
    ConfigurationSaving = { Enabled = false }
 })
 
--- [[ 3. 変数設定（そらりす.txt の内部ロジックを継承） ]]
-local State = {
-    Enabled = false,
+-- [[ 3. HvH専用・戦闘パラメータ ]]
+local HvH = {
+    Tapping = false,
     Delay = 0.01,
-    Algorithm = "Stepped" -- そらりす基準の高速モード
+    Power = 1, -- 1フレームあたりのクリック数
+    Jitter = true, -- 検知回避
+    BurstMode = false -- バースト連打
 }
 
--- [[ 4. タブ & 機能 ]]
-local Tab = Window:CreateTab("Combat", nil)
+-- [[ 4. 戦闘用タブ構築 ]]
+local CombatTab = Window:CreateTab("Combat / HvH", 4483345998)
 
-Tab:CreateToggle({
-   Name = "AUTO TAP",
+CombatTab:CreateSection("Main Offensive")
+
+CombatTab:CreateToggle({
+   Name = "AUTO TAP (KILLER)",
    CurrentValue = false,
-   Callback = function(Value) State.Enabled = Value end,
+   Callback = function(v) HvH.Tapping = v end,
 })
 
-Tab:CreateSlider({
-   Name = "Speed",
+CombatTab:CreateSlider({
+   Name = "Attack Speed",
    Range = {0.001, 0.05},
    Increment = 0.001,
    CurrentValue = 0.01,
-   Callback = function(Value) State.Delay = Value end,
+   Callback = function(v) HvH.Delay = v end,
 })
 
--- [[ 5. 超高速連打エンジン（ロガー・通知一切なし） ]]
+CombatTab:CreateSection("HvH Optimizations")
+
+CombatTab:CreateDropdown({
+   Name = "Power Multiplier",
+   Options = {"x1 (Stable)", "x2 (Heavy)", "x3 (Overload)"},
+   CurrentOption = "x1 (Stable)",
+   Callback = function(Option)
+      if Option == "x1 (Stable)" then HvH.Power = 1
+      elseif Option == "x2 (Heavy)" then HvH.Power = 2
+      elseif Option == "x3 (Overload)" then HvH.Power = 3 end
+   end,
+})
+
+CombatTab:CreateToggle({
+   Name = "Anti-Cheat Jitter",
+   CurrentValue = true,
+   Callback = function(v) HvH.Jitter = v end,
+})
+
+-- [[ 5. 強化版：HvH連打エンジン（そらりす同期式） ]]
 task.spawn(function()
     local RunService = game:GetService("RunService")
     
     while true do
-        if State.Enabled then
-            -- そらりす.txt で採用されていた Stepped 同期をさらに高速化
-            RunService.Stepped:Wait() 
+        if HvH.Tapping then
+            -- Stepped同期（物理演算より手前でパケットを投げる）
+            RunService.Stepped:Wait()
             
-            if mouse1click then
-                mouse1click()
-                -- 二重パケット（火力を既存の倍にする改良）
-                mouse1click()
+            pcall(function()
+                if mouse1click then
+                    -- Power倍率分だけパケットを多重送信
+                    for i = 1, HvH.Power do
+                        mouse1click()
+                    end
+                end
+            end)
+            
+            -- 検知回避とパケット密度の調整
+            local waitTime = HvH.Delay
+            if HvH.Jitter then
+                waitTime = waitTime + (math.random(-15, 15) / 10000)
             end
-            
-            -- 人間には不可能な 0.0001秒単位のランダム揺らぎ
-            task.wait(State.Delay + (math.random(-10, 10) / 10000))
+            task.wait(waitTime)
         else
             task.wait(0.5)
         end
     end
 end)
 
--- 通知コード（Rayfield:Notify）とロガー（Pastefy等）は完全に削除済み
+-- ロガーや起動通知は一切含まれていません。
+Rayfield:LoadConfiguration()
