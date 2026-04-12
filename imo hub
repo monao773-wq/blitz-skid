@@ -1,40 +1,32 @@
--- [[ 1. Orion UI ライブラリ本体（直接埋め込み） ]]
--- 外部読み込みをせず、このスクリプト内で完結させます
-local OrionLib = (function()
-    -- アップロードされたソースの主要部分をここに展開しています
-    local UserInputService = game:GetService("UserInputService")
-    local TweenService = game:GetService("TweenService")
-    local RunService = game:GetService("RunService")
-    local LocalPlayer = game:GetService("Players").LocalPlayer
-    local Mouse = LocalPlayer:GetMouse()
-    local HttpService = game:GetService("HttpService")
-    
-    -- (Orionの読み込みURLを介さず、標準的なソースをロード)
-    return loadstring(game:HttpGet('https://raw.githubusercontent.com/shlexsoftware/Orion/main/source'))()
-end)()
+-- [[ 1. Orion UI ライブラリの初期化 ]]
+-- 外部サーバーからOrionの機能を呼び出します
+local OrionLib = loadstring(game:HttpGet(('https://raw.githubusercontent.com/shlexsoftware/Orion/main/source')))()
 
--- [[ 2. ウィンドウとタブの作成 ]]
+-- [[ 2. メインウィンドウの設定 ]]
 local Window = OrionLib:MakeWindow({
-    Name = "Blitz-Skid | XENO OVERDRIVE",
+    Name = "Blitz-Skid | OVERDRIVE HvH",
     HidePremium = false,
     SaveConfig = true,
-    ConfigFolder = "Xeno_Blitz",
-    IntroText = "Blitz-Skid Protocol: Loaded"
+    ConfigFolder = "BlitzSkid_Config",
+    IntroText = "System Secured: Ready to Dominate"
 })
 
+-- [[ 3. 変数管理（検知回避用） ]]
+local Tapping = false
+local BaseSpeed = 0.015
+local AntiKick = true
+
+-- [[ 4. タブ作成 ]]
 local MainTab = Window:MakeTab({
     Name = "Main / ftap",
-    Icon = "rbxassetid://4483345998"
+    Icon = "rbxassetid://4483345998",
+    PremiumOnly = false
 })
 
--- [[ 3. 変数設定 ]]
-local Tapping = false
-local BaseSpeed = 0.01
-
--- [[ 4. UIコンポーネント ]]
+-- [[ 5. UIコンポーネントの構築 ]]
 
 MainTab:AddToggle({
-    Name = "AUTO TAP START",
+    Name = "AUTO TAP ENABLED (自動タップ)",
     Default = false,
     Callback = function(Value)
         Tapping = Value
@@ -42,10 +34,10 @@ MainTab:AddToggle({
 })
 
 MainTab:AddSlider({
-    Name = "Speed (低速 <---> 高速)",
+    Name = "Tap Speed (秒)",
     Min = 0.005,
     Max = 0.1,
-    Default = 0.01,
+    Default = 0.015,
     Increment = 0.001,
     ValueName = "sec",
     Callback = function(Value)
@@ -53,39 +45,56 @@ MainTab:AddSlider({
     end    
 })
 
-MainTab:AddLabel("HvH対策: ランダム遅延・パケット保護有効")
+MainTab:AddToggle({
+    Name = "Anti-Kick Mode (検知回避)",
+    Default = true,
+    Callback = function(Value)
+        AntiKick = Value
+    end    
+})
 
--- [[ 5. Xeno最適化・限界突破連打エンジン ]]
+MainTab:AddLabel("警告: 低速設定はサーバーキックのリスクを下げます")
+
+-- [[ 6. 限界突破：連打エンジンコア ]]
+-- Xenoなどのエグゼキューターで最も安定するHeartbeat同期を採用
 
 task.spawn(function()
-    local lastTap = tick()
+    local RunService = game:GetService("RunService")
+    local tapCount = 0
+    local burstLimit = math.random(10, 20)
     
     while true do
         if Tapping then
-            -- サーバーの処理単位(Heartbeat)に合わせて実行
-            game:GetService("RunService").Heartbeat:Wait()
+            -- サーバーの物理演算サイクルに同期（機械的リズムを隠す）
+            RunService.Heartbeat:Wait()
             
-            if tick() - lastTap >= (BaseSpeed + (math.random(-50, 50) / 10000)) then
-                -- Xenoでのクリック実行
-                if mouse1click then
-                    mouse1click()
-                elseif click_detector then
-                    click_detector()
-                end
-                lastTap = tick()
+            -- クリック実行
+            if mouse1click then
+                mouse1click()
+                tapCount = tapCount + 1
             end
+            
+            -- 遅延計算（アンチキック対策）
+            local finalDelay = BaseSpeed
+            if AntiKick then
+                -- 0.0001秒単位で毎回リズムを変える（統計検知対策）
+                local jitter = math.random(-50, 50) / 10000
+                finalDelay = finalDelay + jitter
+                
+                -- 定期的に「指を離す」瞬間を模倣（レートリミット対策）
+                if tapCount >= burstLimit then
+                    task.wait(finalDelay + 0.05)
+                    tapCount = 0
+                    burstLimit = math.random(10, 25)
+                end
+            end
+            
+            task.wait(finalDelay)
         else
-            task.wait(0.5) -- OFF時は待機
+            -- OFF時は負荷をかけない
+            task.wait(0.5)
         end
     end
 end)
 
--- [[ 6. 外部ハブ(imo hub)の安全な読み込み ]]
--- もしリンク先が消えていても、ここだけがエラーになるようにします
-task.spawn(function()
-    pcall(function()
-        loadstring(game:HttpGet("https://raw.githubusercontent.com/monao773-wq/blitz-skid/main/imo%20hub"))()
-    end)
-end)
-
-OrionLib:Init()
+--
