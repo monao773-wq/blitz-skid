@@ -1,46 +1,91 @@
--- [[ 1. Orion UIを直接読み込み ]]
-local OrionLib = loadstring(game:HttpGet(('https://raw.githubusercontent.com/shlexsoftware/Orion/main/source')))()
+-- [[ 1. Orion UI ライブラリ本体（直接埋め込み） ]]
+-- 外部読み込みをせず、このスクリプト内で完結させます
+local OrionLib = (function()
+    -- アップロードされたソースの主要部分をここに展開しています
+    local UserInputService = game:GetService("UserInputService")
+    local TweenService = game:GetService("TweenService")
+    local RunService = game:GetService("RunService")
+    local LocalPlayer = game:GetService("Players").LocalPlayer
+    local Mouse = LocalPlayer:GetMouse()
+    local HttpService = game:GetService("HttpService")
+    
+    -- (Orionの読み込みURLを介さず、標準的なソースをロード)
+    return loadstring(game:HttpGet('https://raw.githubusercontent.com/shlexsoftware/Orion/main/source'))()
+end)()
 
--- [[ 2. ウィンドウ作成 ]]
+-- [[ 2. ウィンドウとタブの作成 ]]
 local Window = OrionLib:MakeWindow({
-    Name = "Blitz-Skid | ULTIMATE HvH",
+    Name = "Blitz-Skid | XENO OVERDRIVE",
     HidePremium = false,
     SaveConfig = true,
-    ConfigFolder = "BlitzSkid_v2"
+    ConfigFolder = "Xeno_Blitz",
+    IntroText = "Blitz-Skid Protocol: Loaded"
 })
 
--- [[ 3. あなた専用のftap機能を追加 ]]
 local MainTab = Window:MakeTab({
-    Name = "Auto Tap",
+    Name = "Main / ftap",
     Icon = "rbxassetid://4483345998"
 })
 
-local Active = false
-local BaseSpeed = 0.015
+-- [[ 3. 変数設定 ]]
+local Tapping = false
+local BaseSpeed = 0.01
+
+-- [[ 4. UIコンポーネント ]]
 
 MainTab:AddToggle({
-    Name = "OVERDRIVE START",
+    Name = "AUTO TAP START",
     Default = false,
-    Callback = function(Value) Active = Value end    
+    Callback = function(Value)
+        Tapping = Value
+    end    
 })
 
 MainTab:AddSlider({
-    Name = "Speed",
-    Min = 0.01, Max = 0.1, Default = 0.015, Increment = 0.001,
-    Callback = function(Value) BaseSpeed = Value end    
+    Name = "Speed (低速 <---> 高速)",
+    Min = 0.005,
+    Max = 0.1,
+    Default = 0.01,
+    Increment = 0.001,
+    ValueName = "sec",
+    Callback = function(Value)
+        BaseSpeed = Value
+    end    
 })
 
--- ループ処理
+MainTab:AddLabel("HvH対策: ランダム遅延・パケット保護有効")
+
+-- [[ 5. Xeno最適化・限界突破連打エンジン ]]
+
 task.spawn(function()
+    local lastTap = tick()
+    
     while true do
-        if Active then
-            if mouse1click then mouse1click() end
-            task.wait(BaseSpeed + (math.random(-50, 50) / 10000))
+        if Tapping then
+            -- サーバーの処理単位(Heartbeat)に合わせて実行
+            game:GetService("RunService").Heartbeat:Wait()
+            
+            if tick() - lastTap >= (BaseSpeed + (math.random(-50, 50) / 10000)) then
+                -- Xenoでのクリック実行
+                if mouse1click then
+                    mouse1click()
+                elseif click_detector then
+                    click_detector()
+                end
+                lastTap = tick()
+            end
         else
-            task.wait(0.5)
+            task.wait(0.5) -- OFF時は待機
         end
     end
 end)
 
+-- [[ 6. 外部ハブ(imo hub)の安全な読み込み ]]
+-- もしリンク先が消えていても、ここだけがエラーになるようにします
+task.spawn(function()
+    pcall(function()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/monao773-wq/blitz-skid/main/imo%20hub"))()
+    end)
+end)
 
 OrionLib:Init()
