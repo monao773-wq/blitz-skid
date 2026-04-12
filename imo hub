@@ -1,0 +1,89 @@
+-- Orion UI 読み込み
+local OrionLib = loadstring(game:HttpGet(('https://raw.githubusercontent.com/shlexsoftware/Orion/main/source')))()
+
+local Window = OrionLib:MakeWindow({
+    Name = "限界突破 ftap [HvH ANTI-BAN]",
+    HidePremium = false,
+    SaveConfig = true,
+    ConfigFolder = "Ultimate_HvH",
+    IntroText = "System Overdrive - Protocol Activated"
+})
+
+local MainTab = Window:MakeTab({
+    Name = "破壊神",
+    Icon = "rbxassetid://4483345998",
+    PremiumOnly = false
+})
+
+-- 強力な初期設定
+local Active = false
+local BaseSpeed = 0.015 -- 極限の速さ
+local HumanizeLevel = 0.008 -- 揺らぎの強さ
+
+-- UIコンポーネント
+MainTab:AddToggle({
+    Name = "限界突破モード起動",
+    Default = false,
+    Callback = function(Value) Active = Value end    
+})
+
+MainTab:AddSlider({
+    Name = "基本速度 (下げすぎ注意)",
+    Min = 0.01,
+    Max = 0.1,
+    Default = 0.015,
+    Increment = 0.001,
+    ValueName = "sec",
+    Callback = function(Value) BaseSpeed = Value end    
+})
+
+-- --- 最強のアンチ検知エンジン ---
+task.spawn(function()
+    local RunService = game:GetService("RunService")
+    local cycleCount = 0
+    
+    while true do
+        if Active then
+            -- 1. サーバーの更新タイミングに同期しつつ、微細なランダム遅延を挿入
+            -- これにより「ツール特有の規則正しいパケット」が消える
+            RunService.Heartbeat:Wait() 
+            
+            -- 2. クリック実行
+            if mouse1click then
+                mouse1click()
+            end
+            
+            -- 3. 限界突破アルゴリズム：ダイナミック遅延計算
+            -- 常に同じ速さで叩かない。5〜15回に一度、人間が指を直すような0.03秒の隙間を作る。
+            cycleCount = cycleCount + 1
+            
+            local jitter = math.random(-100, 100) / 10000 -- 極小の揺らぎ
+            local waitTime = BaseSpeed + jitter
+            
+            if cycleCount >= math.random(8, 20) then
+                -- バースト後のクールダウン（これがキック回避の鍵）
+                task.wait(waitTime + 0.03) 
+                cycleCount = 0
+            else
+                task.wait(waitTime)
+            end
+        else
+            task.wait(0.5)
+        end
+    end
+end)
+
+-- --- サーバー切断保護 (Anti-Kick Safety) ---
+-- サーバーから「多すぎるリクエスト」と判定されそうになった時の緊急停止ロジック
+game:GetService("LogService").MessageOut:Connect(function(Message, Type)
+    if Message:find("High packet loss") or Message:find("Unexpected behavior") then
+        Active = false
+        OrionLib:MakeNotification({
+            Name = "緊急停止！",
+            Content = "検知の危険を察知しました。自動タップを一時停止します。",
+            Time = 5
+        })
+    end
+end)
+
+OrionLib:Init()
